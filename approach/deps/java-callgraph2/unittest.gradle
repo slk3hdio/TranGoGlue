@@ -1,0 +1,36 @@
+test {
+    doFirst {
+        exclude('test/runlocal')
+        minHeapSize = "256m"
+        maxHeapSize = "1g"
+
+        maxParallelForks = 1
+
+        forkEvery = 1
+
+        jvmArgs "-XX:MetaspaceSize=64m", "-XX:MaxMetaspaceSize=256m"
+
+        testLogging {
+            events "PASSED", "STARTED", "FAILED", "SKIPPED"
+        }
+    }
+}
+
+// 生成包含jar文件的jar文件
+tasks.register('gen_jar_in_jar', Jar) {
+    archiveFileName = 'jar_output_dir.jar'
+    destinationDirectory = file("${buildDir}")
+
+    from(sourceSets.test.output) {
+        include 'test/**'
+        into '/'
+    }
+
+    from(fileTree('jar_output_dir/jar')) {
+        into 'jar'
+    }
+
+    from(fileTree('jar_output_dir/lib')) {
+        into 'lib'
+    }
+}

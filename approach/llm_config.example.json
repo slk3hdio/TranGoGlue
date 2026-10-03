@@ -1,0 +1,7 @@
+{
+  "model-key": {
+    "api_key": "<API_KEY>",
+    "base_url": "<OPENAI_COMPATIBLE_BASE_URL>",
+    "model_name": "<PROVIDER_MODEL_NAME>"
+  }
+}

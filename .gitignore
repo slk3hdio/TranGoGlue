@@ -1,0 +1,13 @@
+approach/llm_config.json
+approach/*.local.json
+**/__pycache__/
+*.py[cod]
+.idea/
+.vscode/
+**/.git.excluded/
+output/
+output_*/
+**/output/
+**/output1/
+source_projects/
+source_projects_min50/
