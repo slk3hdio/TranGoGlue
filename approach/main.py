@@ -376,7 +376,10 @@ def main(
 
 if __name__ == '__main__':
     import argparse
-    parser = argparse.ArgumentParser(description="v4_7 translation pipeline")
+    parser = argparse.ArgumentParser(
+        prog="TranGoGlue",
+        description="TranGoGlue Java-to-C++ translation pipeline",
+    )
     parser.add_argument("--ai", required=True, help="AI model name")
     parser.add_argument("--mapping-ai", default="", help="方法映射阶段单独使用的模型；默认与 --ai 一致")
     parser.add_argument("--mapping-thinking", action=argparse.BooleanOptionalAction, default=True, help="方法映射模型开启思考模式（默认开启，--no-mapping-thinking 关闭）")

@@ -1,6 +1,6 @@
-# Running the SITP Main Approach
+# TranGoGlue
 
-This directory contains the paper's Java-to-C++ translation approach. The entry point is `approach/main.py`, which runs the `v4_7` pipeline: project graph construction, header planning and translation, method mapping and translation, C++ file generation, compilation checks, and optional agent repair.
+TranGoGlue is the paper's Java-to-C++ translation method. The entry point is `approach/main.py`, which runs the `v4_7` pipeline: project graph construction, header planning and translation, method mapping and translation, C++ file generation, compilation checks, and optional agent repair.
 
 ## 1. Prerequisites
 
