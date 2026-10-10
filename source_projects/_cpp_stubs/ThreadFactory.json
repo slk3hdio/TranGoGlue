@@ -1,0 +1,13 @@
+{
+  "class_name": "ThreadFactory",
+  "java_class": "java.util.concurrent.ThreadFactory",
+  "header_code": "#pragma once\n\n#include <functional>\n#include <thread>\n\n// java.util.concurrent.ThreadFactory 接口桩。\n// 按需创建新线程，供线程池等组件自定义线程属性。\nclass ThreadFactory {\npublic:\n    virtual ~ThreadFactory() = default;\n\n    // 创建一个新线程执行 r（对应 Java 的 newThread(Runnable)）\n    virtual std::thread newThread(std::function<void()> r) = 0;\n};\n",
+  "cpp_code": "",
+  "methods": [
+    {
+      "java_signature": "java.util.concurrent.ThreadFactory:newThread(java.lang.Runnable)",
+      "cpp_declaration": "virtual std::thread newThread(std::function<void()> r) = 0;",
+      "body_location": "header"
+    }
+  ]
+}

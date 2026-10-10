@@ -1,0 +1,23 @@
+{
+  "class_name": "Future",
+  "java_class": "java.util.concurrent.Future",
+  "header_code": "#pragma once\n\n// java.util.concurrent.Future 模板接口桩。\n// 表示一个异步计算的结果：可阻塞获取、可取消、可查询完成状态。\ntemplate<typename T>\nclass Future {\npublic:\n    virtual ~Future() = default;\n\n    // 阻塞等待并返回结果；任务异常完成或被取消时抛异常\n    virtual T get() = 0;\n    // 尝试取消任务；已完成或已取消时返回 false\n    virtual bool cancel(bool mayInterruptIfRunning) = 0;\n    // 任务是否已结束（正常完成、异常完成或被取消均视为 done）\n    virtual bool isDone() = 0;\n};\n",
+  "cpp_code": "",
+  "methods": [
+    {
+      "java_signature": "java.util.concurrent.Future:get()",
+      "cpp_declaration": "virtual T get() = 0;",
+      "body_location": "header"
+    },
+    {
+      "java_signature": "java.util.concurrent.Future:cancel(boolean)",
+      "cpp_declaration": "virtual bool cancel(bool mayInterruptIfRunning) = 0;",
+      "body_location": "header"
+    },
+    {
+      "java_signature": "java.util.concurrent.Future:isDone()",
+      "cpp_declaration": "virtual bool isDone() = 0;",
+      "body_location": "header"
+    }
+  ]
+}

@@ -1,0 +1,33 @@
+{
+  "class_name": "AtomicReference",
+  "java_class": "java.util.concurrent.atomic.AtomicReference",
+  "header_code": "#pragma once\n\n#include <mutex>\n#include <utility>\n\n// java.util.concurrent.atomic.AtomicReference 模板桩。\n// 编译器（llvm-mingw clang++）不支持 std::atomic<std::shared_ptr>，\n// 因此用 mutex + 普通值存储实现原子语义；T 为原生指针或智能指针时同样适用。\ntemplate<typename T>\nclass AtomicReference {\npublic:\n    AtomicReference() = default;\n    explicit AtomicReference(T initial) : value_(std::move(initial)) {}\n\n    // 原子读取当前值\n    T get() const {\n        std::lock_guard<std::mutex> lock(mutex_);\n        return value_;\n    }\n\n    // 原子写入新值\n    void set(T newValue) {\n        std::lock_guard<std::mutex> lock(mutex_);\n        value_ = std::move(newValue);\n    }\n\n    // CAS：当前值 == expected 时替换为 update，返回是否成功\n    bool compareAndSet(T expected, T update) {\n        std::lock_guard<std::mutex> lock(mutex_);\n        if (value_ == expected) {\n            value_ = std::move(update);\n            return true;\n        }\n        return false;\n    }\n\nprivate:\n    mutable std::mutex mutex_;\n    T value_{};\n};\n",
+  "cpp_code": "",
+  "methods": [
+    {
+      "java_signature": "java.util.concurrent.atomic.AtomicReference:<init>()",
+      "cpp_declaration": "AtomicReference();",
+      "body_location": "header"
+    },
+    {
+      "java_signature": "java.util.concurrent.atomic.AtomicReference:<init>(java.lang.Object)",
+      "cpp_declaration": "explicit AtomicReference(T initial);",
+      "body_location": "header"
+    },
+    {
+      "java_signature": "java.util.concurrent.atomic.AtomicReference:get()",
+      "cpp_declaration": "T get() const;",
+      "body_location": "header"
+    },
+    {
+      "java_signature": "java.util.concurrent.atomic.AtomicReference:set(java.lang.Object)",
+      "cpp_declaration": "void set(T newValue);",
+      "body_location": "header"
+    },
+    {
+      "java_signature": "java.util.concurrent.atomic.AtomicReference:compareAndSet(java.lang.Object,java.lang.Object)",
+      "cpp_declaration": "bool compareAndSet(T expected, T update);",
+      "body_location": "header"
+    }
+  ]
+}

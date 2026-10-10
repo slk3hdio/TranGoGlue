@@ -1,0 +1,13 @@
+{
+  "class_name": "Callable",
+  "java_class": "java.util.concurrent.Callable",
+  "header_code": "#pragma once\n\n#include <functional>\n\n// java.util.concurrent.Callable 桩。\n// 注意：这里不是抽象类，而是 std::function 的类型别名——\n// 任何无参、返回 T 的可调用对象（lambda、函数指针、bind 结果等）\n// 都可直接作为 Callable<T> 使用。\ntemplate<typename T>\nusing Callable = std::function<T()>;\n",
+  "cpp_code": "",
+  "methods": [
+    {
+      "java_signature": "java.util.concurrent.Callable:call()",
+      "cpp_declaration": "T call(); // 别名: std::function<T()>",
+      "body_location": "header"
+    }
+  ]
+}

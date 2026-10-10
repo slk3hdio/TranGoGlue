@@ -1,0 +1,28 @@
+{
+  "class_name": "ScheduledThreadPoolExecutor",
+  "java_class": "java.util.concurrent.ScheduledThreadPoolExecutor",
+  "header_code": "#pragma once\n\n#include \"ScheduledExecutorService.h\"\n\n#include <cstddef>\n\n// java.util.concurrent.ScheduledThreadPoolExecutor 桩。\n// 直接继承 ScheduledExecutorService 的实现，仅补充 removeOnCancel 策略开关：\n// 桩实现中取消即标记跳过（任务本体不会执行），天然满足移除语义，因此仅记录开关值。\nclass ScheduledThreadPoolExecutor : public ScheduledExecutorService {\npublic:\n    explicit ScheduledThreadPoolExecutor(std::size_t corePoolSize)\n        : ScheduledExecutorService(corePoolSize) {}\n\n    // Java 语义：任务取消后是否立即从工作队列移除；此处为空实现（仅记录）\n    void setRemoveOnCancelPolicy(bool value) { removeOnCancel_ = value; }\n    bool getRemoveOnCancelPolicy() const { return removeOnCancel_; }\n\n    void shutdown() override { ScheduledExecutorService::shutdown(); }\n\nprivate:\n    bool removeOnCancel_ = false;\n};\n",
+  "cpp_code": "",
+  "methods": [
+    {
+      "java_signature": "java.util.concurrent.ScheduledThreadPoolExecutor:<init>(int)",
+      "cpp_declaration": "explicit ScheduledThreadPoolExecutor(std::size_t corePoolSize);",
+      "body_location": "header"
+    },
+    {
+      "java_signature": "java.util.concurrent.ScheduledThreadPoolExecutor:setRemoveOnCancelPolicy(boolean)",
+      "cpp_declaration": "void setRemoveOnCancelPolicy(bool value); // 空实现，仅记录开关",
+      "body_location": "header"
+    },
+    {
+      "java_signature": "java.util.concurrent.ScheduledThreadPoolExecutor:getRemoveOnCancelPolicy()",
+      "cpp_declaration": "bool getRemoveOnCancelPolicy() const;",
+      "body_location": "header"
+    },
+    {
+      "java_signature": "java.util.concurrent.ScheduledThreadPoolExecutor:shutdown()",
+      "cpp_declaration": "void shutdown() override;",
+      "body_location": "header"
+    }
+  ]
+}

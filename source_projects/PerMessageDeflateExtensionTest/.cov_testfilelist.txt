@@ -1,0 +1,1 @@
+tests/org/java_websocket/extensions/PerMessageDeflateExtensionSmokeTest.java

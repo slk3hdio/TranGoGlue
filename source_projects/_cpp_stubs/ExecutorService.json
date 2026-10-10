@@ -1,0 +1,33 @@
+{
+  "class_name": "ExecutorService",
+  "java_class": "java.util.concurrent.ExecutorService",
+  "header_code": "#pragma once\n\n#include \"Executor.h\"\n\n#include <condition_variable>\n#include <cstddef>\n#include <functional>\n#include <future>\n#include <memory>\n#include <mutex>\n#include <queue>\n#include <stdexcept>\n#include <thread>\n#include <utility>\n#include <vector>\n\n// java.util.concurrent.ExecutorService 最小线程池桩。\n// 固定大小线程池：mutex + condition_variable 保护的阻塞任务队列 + 工作线程组。\n// - shutdown 后再提交任务抛 std::runtime_error；\n// - shutdown 不阻塞，已入队任务继续执行完毕；\n// - 析构时自动 shutdown 并 join 所有工作线程。\nclass ExecutorService : public Executor {\npublic:\n    // 构造并启动 workers 个工作线程；0 表示使用硬件并发数（至少为 1）\n    explicit ExecutorService(std::size_t workers = std::thread::hardware_concurrency());\n    ~ExecutorService() override;\n\n    ExecutorService(const ExecutorService&) = delete;\n    ExecutorService& operator=(const ExecutorService&) = delete;\n\n    // 提交无返回值任务（实现 Executor 接口）；shutdown 后抛 std::runtime_error\n    void execute(std::function<void()> command) override;\n\n    // 提交带返回值任务（对应 Java Callable），返回 future。\n    // 模板方法，必须在头文件实现。\n    template<typename T>\n    std::shared_ptr<std::future<T>> submit(std::function<T()> task) {\n        auto packaged = std::make_shared<std::packaged_task<T()>>(std::move(task));\n        auto result = std::make_shared<std::future<T>>(packaged->get_future());\n        // execute 在 shutdown 后会抛异常并向上传播，与 Java 拒绝语义一致\n        execute([packaged]() { (*packaged)(); });\n        return result;\n    }\n\n    // 停止接收新任务；已入队任务继续执行（虚函数，允许子类扩展关闭逻辑）\n    virtual void shutdown();\n    bool isShutdown() const;\n\nprivate:\n    // 工作线程主循环：阻塞取任务执行，shutdown 且队列空时退出\n    void workerLoop();\n\n    mutable std::mutex mutex_;\n    std::condition_variable cv_;\n    std::queue<std::function<void()>> tasks_;\n    std::vector<std::thread> workers_;\n    bool shutdown_ = false;\n};\n",
+  "cpp_code": "#include \"ExecutorService.h\"\n\nExecutorService::ExecutorService(std::size_t workers) {\n    if (workers == 0) workers = 1;  // 硬件并发数不可知时至少起一个线程\n    workers_.reserve(workers);\n    for (std::size_t i = 0; i < workers; ++i)\n        workers_.emplace_back([this]() { workerLoop(); });\n}\n\nExecutorService::~ExecutorService() {\n    shutdown();\n    for (auto& t : workers_) {\n        if (t.joinable()) t.join();\n    }\n}\n\nvoid ExecutorService::execute(std::function<void()> command) {\n    {\n        std::lock_guard<std::mutex> lock(mutex_);\n        if (shutdown_)\n            throw std::runtime_error(\"ExecutorService 已 shutdown，拒绝新任务\");\n        tasks_.push(std::move(command));\n    }\n    cv_.notify_one();\n}\n\nvoid ExecutorService::shutdown() {\n    {\n        std::lock_guard<std::mutex> lock(mutex_);\n        shutdown_ = true;\n    }\n    cv_.notify_all();\n}\n\nbool ExecutorService::isShutdown() const {\n    std::lock_guard<std::mutex> lock(mutex_);\n    return shutdown_;\n}\n\nvoid ExecutorService::workerLoop() {\n    for (;;) {\n        std::function<void()> task;\n        {\n            std::unique_lock<std::mutex> lock(mutex_);\n            cv_.wait(lock, [this]() { return shutdown_ || !tasks_.empty(); });\n            if (tasks_.empty()) {\n                if (shutdown_) return;  // shutdown 且队列已清空：线程退出\n                continue;               // 虚假唤醒\n            }\n            task = std::move(tasks_.front());\n            tasks_.pop();\n        }\n        task();\n    }\n}\n",
+  "methods": [
+    {
+      "java_signature": "java.util.concurrent.ExecutorService:<init>(int)",
+      "cpp_declaration": "explicit ExecutorService(std::size_t workers = std::thread::hardware_concurrency());",
+      "body_location": "cpp"
+    },
+    {
+      "java_signature": "java.util.concurrent.ExecutorService:execute(java.lang.Runnable)",
+      "cpp_declaration": "void execute(std::function<void()> command) override;",
+      "body_location": "cpp"
+    },
+    {
+      "java_signature": "java.util.concurrent.ExecutorService:submit(java.util.concurrent.Callable)",
+      "cpp_declaration": "template<typename T> std::shared_ptr<std::future<T>> submit(std::function<T()> task);",
+      "body_location": "header"
+    },
+    {
+      "java_signature": "java.util.concurrent.ExecutorService:shutdown()",
+      "cpp_declaration": "virtual void shutdown();",
+      "body_location": "cpp"
+    },
+    {
+      "java_signature": "java.util.concurrent.ExecutorService:isShutdown()",
+      "cpp_declaration": "bool isShutdown() const;",
+      "body_location": "cpp"
+    }
+  ]
+}

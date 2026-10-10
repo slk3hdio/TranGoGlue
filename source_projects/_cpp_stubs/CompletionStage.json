@@ -1,0 +1,18 @@
+{
+  "class_name": "CompletionStage",
+  "java_class": "java.util.concurrent.CompletionStage",
+  "header_code": "#pragma once\n\n#include <exception>\n#include <functional>\n#include <memory>\n\n// 前向声明：thenCompose 的实现需要 CompletableFuture 完整类型，\n// 其定义放在 CompletableFuture.h 末尾以打破头文件循环依赖。\ntemplate<typename T>\nclass CompletableFuture;\n\n// java.util.concurrent.CompletionStage 模板接口桩。\n// 表示异步计算的一个阶段，支持完成回调与链式组合。\ntemplate<typename T>\nclass CompletionStage {\npublic:\n    virtual ~CompletionStage() = default;\n\n    // 注册完成回调：阶段正常或异常完成时触发，返回本阶段\n    virtual std::shared_ptr<CompletionStage<T>> whenComplete(\n        std::function<void(T, std::exception_ptr)> action) = 0;\n\n    // 链式组合：本阶段完成后以结果为输入执行 fn，返回 fn 产生的新阶段。\n    // 非虚函数模板（虚函数不能是模板），定义见 CompletableFuture.h 末尾，\n    // 必须在包含 CompletableFuture.h 的翻译单元中实例化。\n    template<typename U>\n    std::shared_ptr<CompletionStage<U>> thenCompose(\n        std::function<std::shared_ptr<CompletionStage<U>>(T)> fn);\n};\n",
+  "cpp_code": "",
+  "methods": [
+    {
+      "java_signature": "java.util.concurrent.CompletionStage:whenComplete(java.util.function.BiConsumer)",
+      "cpp_declaration": "virtual std::shared_ptr<CompletionStage<T>> whenComplete(std::function<void(T, std::exception_ptr)> action) = 0;",
+      "body_location": "header"
+    },
+    {
+      "java_signature": "java.util.concurrent.CompletionStage:thenCompose(java.util.function.Function)",
+      "cpp_declaration": "template<typename U> std::shared_ptr<CompletionStage<U>> thenCompose(std::function<std::shared_ptr<CompletionStage<U>>(T)> fn); // 定义在 CompletableFuture.h 末尾",
+      "body_location": "header"
+    }
+  ]
+}

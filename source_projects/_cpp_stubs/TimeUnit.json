@@ -1,0 +1,38 @@
+{
+  "class_name": "TimeUnit",
+  "java_class": "java.util.concurrent.TimeUnit",
+  "header_code": "#pragma once\n\n#include <chrono>\n#include <thread>\n\n// java.util.concurrent.TimeUnit 的最小桩实现。\n// Java 中 TimeUnit 是枚举，这里用「类 + 静态常量实例」模拟，\n// 提供 NANOSECONDS / MICROSECONDS / MILLISECONDS / SECONDS 四个常用单位，\n// 内部统一以「每单位纳秒数」作为换算基准。\nclass TimeUnit {\npublic:\n    // 静态实例（C++17 inline 变量，定义在类外、仍在头文件中，header-only）\n    static const TimeUnit NANOSECONDS;\n    static const TimeUnit MICROSECONDS;\n    static const TimeUnit MILLISECONDS;\n    static const TimeUnit SECONDS;\n\n    // 将以本单位的 d 换算为纳秒\n    long toNanos(long d) const { return d * nanos_; }\n    // 将以本单位的 d 换算为微秒\n    long toMicros(long d) const { return d * nanos_ / 1000L; }\n    // 将以本单位的 d 换算为毫秒\n    long toMillis(long d) const { return d * nanos_ / 1000000L; }\n    // 将以本单位的 d 换算为秒\n    long toSeconds(long d) const { return d * nanos_ / 1000000000L; }\n\n    // 将以 sourceUnit 为单位的 sourceDuration 换算为本单位\n    // 与 Java 语义一致：MILLISECONDS.convert(1500, NANOSECONDS) == 0\n    long convert(long sourceDuration, TimeUnit sourceUnit) const {\n        return sourceUnit.nanos_ * sourceDuration / nanos_;\n    }\n\n    // 以本单位的 timeout 时长阻塞当前线程（Thread.sleep 语义）\n    void sleep(long timeout) const {\n        if (timeout > 0)\n            std::this_thread::sleep_for(std::chrono::nanoseconds(toNanos(timeout)));\n    }\n\nprivate:\n    explicit TimeUnit(long nanos) : nanos_(nanos) {}\n    long nanos_;  // 每单位对应的纳秒数\n};\n\n// 静态实例的类外 inline 定义（C++17，保证 header-only 且无多重定义）\ninline const TimeUnit TimeUnit::NANOSECONDS{1L};\ninline const TimeUnit TimeUnit::MICROSECONDS{1000L};\ninline const TimeUnit TimeUnit::MILLISECONDS{1000000L};\ninline const TimeUnit TimeUnit::SECONDS{1000000000L};\n",
+  "cpp_code": "",
+  "methods": [
+    {
+      "java_signature": "java.util.concurrent.TimeUnit:toNanos(long)",
+      "cpp_declaration": "long toNanos(long d) const;",
+      "body_location": "header"
+    },
+    {
+      "java_signature": "java.util.concurrent.TimeUnit:toMicros(long)",
+      "cpp_declaration": "long toMicros(long d) const;",
+      "body_location": "header"
+    },
+    {
+      "java_signature": "java.util.concurrent.TimeUnit:toMillis(long)",
+      "cpp_declaration": "long toMillis(long d) const;",
+      "body_location": "header"
+    },
+    {
+      "java_signature": "java.util.concurrent.TimeUnit:toSeconds(long)",
+      "cpp_declaration": "long toSeconds(long d) const;",
+      "body_location": "header"
+    },
+    {
+      "java_signature": "java.util.concurrent.TimeUnit:convert(long,java.util.concurrent.TimeUnit)",
+      "cpp_declaration": "long convert(long sourceDuration, TimeUnit sourceUnit) const;",
+      "body_location": "header"
+    },
+    {
+      "java_signature": "java.util.concurrent.TimeUnit:sleep(long)",
+      "cpp_declaration": "void sleep(long timeout) const;",
+      "body_location": "header"
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "class_name": "ScheduledFuture",
+  "java_class": "java.util.concurrent.ScheduledFuture",
+  "header_code": "#pragma once\n\n#include \"Delayed.h\"\n#include \"Future.h\"\n\n// java.util.concurrent.ScheduledFuture 模板接口桩。\n// 同时具备 Future（获取结果/取消）与 Delayed（查询剩余延迟）语义。\ntemplate<typename T>\nclass ScheduledFuture : public Future<T>, public Delayed {\npublic:\n    ~ScheduledFuture() override = default;\n\n    // 继承自 Future<T>：\n    // virtual T get() = 0;\n    // virtual bool cancel(bool mayInterruptIfRunning) = 0;\n    // virtual bool isDone() = 0;\n    // 继承自 Delayed：\n    // virtual long getDelay(TimeUnit unit) const = 0;\n};\n",
+  "cpp_code": "",
+  "methods": [
+    {
+      "java_signature": "java.util.concurrent.ScheduledFuture:cancel(boolean)",
+      "cpp_declaration": "virtual bool cancel(bool mayInterruptIfRunning) = 0; // 继承自 Future<T>",
+      "body_location": "header"
+    }
+  ]
+}

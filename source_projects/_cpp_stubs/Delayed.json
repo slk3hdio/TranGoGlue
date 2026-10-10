@@ -1,0 +1,13 @@
+{
+  "class_name": "Delayed",
+  "java_class": "java.util.concurrent.Delayed",
+  "header_code": "#pragma once\n\n#include \"TimeUnit.h\"\n\n// java.util.concurrent.Delayed 接口桩。\n// 表示可获取剩余延迟时间的对象（如 ScheduledFuture）。\nclass Delayed {\npublic:\n    virtual ~Delayed() = default;\n\n    // 返回剩余延迟时间（以 unit 为单位）；<= 0 表示已到期\n    virtual long getDelay(TimeUnit unit) const = 0;\n};\n",
+  "cpp_code": "",
+  "methods": [
+    {
+      "java_signature": "java.util.concurrent.Delayed:getDelay(java.util.concurrent.TimeUnit)",
+      "cpp_declaration": "virtual long getDelay(TimeUnit unit) const = 0;",
+      "body_location": "header"
+    }
+  ]
+}

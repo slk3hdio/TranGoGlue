@@ -1,0 +1,1 @@
+tests/org/java_websocket/drafts/Draft_6455SmokeTest.java

@@ -1,0 +1,63 @@
+{
+  "class_name": "CompletableFuture",
+  "java_class": "java.util.concurrent.CompletableFuture",
+  "header_code": "#pragma once\n\n#include \"CompletionStage.h\"\n#include \"Future.h\"\n#include \"TimeUnit.h\"\n\n#include <chrono>\n#include <exception>\n#include <functional>\n#include <future>\n#include <memory>\n#include <mutex>\n#include <stdexcept>\n#include <utility>\n#include <vector>\n\n// java.util.concurrent.CompletableFuture 模板桩。\n// 同时实现 Future 与 CompletionStage：\n// - 内部用 std::promise + std::shared_future 承载结果，支持阻塞 get 与超时 get；\n// - mutex 保护完成状态与回调列表，完成（正常/异常/取消）时按注册顺序触发回调；\n// - whenComplete/thenCompose 返回带空 deleter 的别名 shared_ptr，\n//   因此 CompletableFuture 对象可被任意方式持有（栈、new 或 shared_ptr）。\ntemplate<typename T>\nclass CompletableFuture : public Future<T>, public CompletionStage<T> {\npublic:\n    CompletableFuture()\n        : promise_(std::make_shared<std::promise<T>>()),\n          future_(promise_->get_future().share()) {}\n\n    // 静态工厂：返回一个已正常完成的 CompletableFuture\n    static std::shared_ptr<CompletableFuture<T>> completedFuture(T value) {\n        auto cf = std::make_shared<CompletableFuture<T>>();\n        cf->complete(value);\n        return cf;\n    }\n\n    // 正常完成；若已完成（含取消）则返回 false\n    bool complete(T value) {\n        std::vector<std::function<void(T, std::exception_ptr)>> callbacks;\n        {\n            std::lock_guard<std::mutex> lock(mutex_);\n            if (done_) return false;\n            done_ = true;\n            value_ = value;\n            callbacks.swap(callbacks_);\n        }\n        // done_ 已保证 promise 只会被设置一次，set_value 不会抛 future_error\n        promise_->set_value(value);\n        for (auto& cb : callbacks) cb(value, nullptr);\n        return true;\n    }\n\n    // 异常完成；若已完成（含取消）则返回 false\n    bool completeExceptionally(std::exception_ptr ex) {\n        std::vector<std::function<void(T, std::exception_ptr)>> callbacks;\n        {\n            std::lock_guard<std::mutex> lock(mutex_);\n            if (done_) return false;\n            done_ = true;\n            error_ = ex;\n            callbacks.swap(callbacks_);\n        }\n        promise_->set_exception(ex);\n        for (auto& cb : callbacks) cb(T{}, ex);\n        return true;\n    }\n\n    // 阻塞等待结果；异常完成或被取消时重新抛出对应异常\n    T get() override { return future_.get(); }\n\n    // 带超时的阻塞等待；超时抛 std::runtime_error\n    T get(long timeout, TimeUnit unit) {\n        auto status = future_.wait_for(std::chrono::nanoseconds(unit.toNanos(timeout)));\n        if (status != std::future_status::ready)\n            throw std::runtime_error(\"CompletableFuture::get 超时\");\n        return future_.get();\n    }\n\n    bool isDone() override {\n        std::lock_guard<std::mutex> lock(mutex_);\n        return done_;\n    }\n\n    // 取消：未完成时标记取消并以异常方式完成（get 将抛异常），已完成返回 false\n    bool cancel(bool /*mayInterruptIfRunning*/) override {\n        std::vector<std::function<void(T, std::exception_ptr)>> callbacks;\n        std::exception_ptr ex =\n            std::make_exception_ptr(std::runtime_error(\"CompletableFuture 已取消\"));\n        {\n            std::lock_guard<std::mutex> lock(mutex_);\n            if (done_) return false;\n            done_ = true;\n            cancelled_ = true;\n            error_ = ex;\n            callbacks.swap(callbacks_);\n        }\n        promise_->set_exception(ex);\n        for (auto& cb : callbacks) cb(T{}, ex);\n        return true;\n    }\n\n    bool isCancelled() {\n        std::lock_guard<std::mutex> lock(mutex_);\n        return cancelled_;\n    }\n\n    // 注册完成回调；若已完成则在调用线程立即执行\n    std::shared_ptr<CompletionStage<T>> whenComplete(\n        std::function<void(T, std::exception_ptr)> action) override {\n        bool callNow = false;\n        T valueSnapshot{};\n        std::exception_ptr errorSnapshot;\n        {\n            std::lock_guard<std::mutex> lock(mutex_);\n            if (done_) {\n                // done_ 不可逆，value_/error_ 此后稳定，可直接取快照\n                callNow = true;\n                valueSnapshot = value_;\n                errorSnapshot = error_;\n            } else {\n                callbacks_.push_back(action);\n            }\n        }\n        if (callNow) action(valueSnapshot, errorSnapshot);\n        // 空 deleter 别名指针：不接管生命周期，仅满足 CompletionStage 返回类型\n        return std::shared_ptr<CompletionStage<T>>(this, [](CompletionStage<T>*) {});\n    }\n\n    // thenCompose 的实现入口（由 CompletionStage<T>::thenCompose 转发调用）。\n    // 同步语义：本阶段完成时立即执行 fn 并把其结果阶段桥接到返回值上。\n    template<typename U>\n    std::shared_ptr<CompletionStage<U>> thenComposeImpl(\n        std::function<std::shared_ptr<CompletionStage<U>>(T)> fn) {\n        auto result = std::make_shared<CompletableFuture<U>>();\n        whenComplete([fn, result](T v, std::exception_ptr ex) {\n            if (ex) {\n                result->completeExceptionally(ex);\n                return;\n            }\n            try {\n                auto next = fn(v);\n                auto nextCf = std::dynamic_pointer_cast<CompletableFuture<U>>(next);\n                if (!nextCf) {\n                    result->completeExceptionally(std::make_exception_ptr(std::logic_error(\n                        \"thenCompose: 不支持的 CompletionStage 实现\")));\n                    return;\n                }\n                // 桥接下一阶段的结果到 result\n                nextCf->whenComplete([result](U uv, std::exception_ptr uex) {\n                    if (uex) result->completeExceptionally(uex);\n                    else result->complete(uv);\n                });\n            } catch (...) {\n                result->completeExceptionally(std::current_exception());\n            }\n        });\n        return result;\n    }\n\nprivate:\n    std::shared_ptr<std::promise<T>> promise_;   // 结果写入端\n    std::shared_future<T> future_;               // 结果读取端（可多次 get）\n    std::mutex mutex_;                           // 保护以下状态\n    bool done_ = false;                          // 是否已完成（含取消），不可逆\n    bool cancelled_ = false;\n    T value_{};                                  // 正常完成时的结果快照\n    std::exception_ptr error_;                   // 异常完成/取消时的异常\n    std::vector<std::function<void(T, std::exception_ptr)>> callbacks_;\n};\n\n// CompletionStage<T>::thenCompose 的延迟定义：\n// 依赖 CompletableFuture 完整类型，因此放在本头文件末尾（模板，随用随实例化）。\ntemplate<typename T>\ntemplate<typename U>\nstd::shared_ptr<CompletionStage<U>> CompletionStage<T>::thenCompose(\n    std::function<std::shared_ptr<CompletionStage<U>>(T)> fn) {\n    auto self = dynamic_cast<CompletableFuture<T>*>(this);\n    if (!self)\n        throw std::logic_error(\"CompletionStage::thenCompose 仅支持 CompletableFuture 实现\");\n    return self->template thenComposeImpl<U>(std::move(fn));\n}\n",
+  "cpp_code": "",
+  "methods": [
+    {
+      "java_signature": "java.util.concurrent.CompletableFuture:<init>()",
+      "cpp_declaration": "CompletableFuture();",
+      "body_location": "header"
+    },
+    {
+      "java_signature": "java.util.concurrent.CompletableFuture:complete(java.lang.Object)",
+      "cpp_declaration": "bool complete(T value);",
+      "body_location": "header"
+    },
+    {
+      "java_signature": "java.util.concurrent.CompletableFuture:completeExceptionally(java.lang.Throwable)",
+      "cpp_declaration": "bool completeExceptionally(std::exception_ptr ex);",
+      "body_location": "header"
+    },
+    {
+      "java_signature": "java.util.concurrent.CompletableFuture:get()",
+      "cpp_declaration": "T get() override;",
+      "body_location": "header"
+    },
+    {
+      "java_signature": "java.util.concurrent.CompletableFuture:get(long,java.util.concurrent.TimeUnit)",
+      "cpp_declaration": "T get(long timeout, TimeUnit unit); // 超时抛 std::runtime_error",
+      "body_location": "header"
+    },
+    {
+      "java_signature": "java.util.concurrent.CompletableFuture:isDone()",
+      "cpp_declaration": "bool isDone() override;",
+      "body_location": "header"
+    },
+    {
+      "java_signature": "java.util.concurrent.CompletableFuture:cancel(boolean)",
+      "cpp_declaration": "bool cancel(bool mayInterruptIfRunning) override;",
+      "body_location": "header"
+    },
+    {
+      "java_signature": "java.util.concurrent.CompletableFuture:isCancelled()",
+      "cpp_declaration": "bool isCancelled();",
+      "body_location": "header"
+    },
+    {
+      "java_signature": "java.util.concurrent.CompletableFuture:completedFuture(java.lang.Object)",
+      "cpp_declaration": "static std::shared_ptr<CompletableFuture<T>> completedFuture(T value);",
+      "body_location": "header"
+    },
+    {
+      "java_signature": "java.util.concurrent.CompletableFuture:whenComplete(java.util.function.BiConsumer)",
+      "cpp_declaration": "std::shared_ptr<CompletionStage<T>> whenComplete(std::function<void(T, std::exception_ptr)> action) override;",
+      "body_location": "header"
+    },
+    {
+      "java_signature": "java.util.concurrent.CompletableFuture:thenCompose(java.util.function.Function)",
+      "cpp_declaration": "template<typename U> std::shared_ptr<CompletionStage<U>> thenComposeImpl(std::function<std::shared_ptr<CompletionStage<U>>(T)> fn); // 经继承的 CompletionStage<T>::thenCompose 转发",
+      "body_location": "header"
+    }
+  ]
+}

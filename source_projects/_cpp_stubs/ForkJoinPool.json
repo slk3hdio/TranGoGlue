@@ -1,0 +1,43 @@
+{
+  "class_name": "ForkJoinPool",
+  "java_class": "java.util.concurrent.ForkJoinPool",
+  "header_code": "#pragma once\n\n#include \"ExecutorService.h\"\n\n#include <cstddef>\n#include <functional>\n#include <future>\n#include <memory>\n#include <thread>\n#include <utility>\n\n// java.util.concurrent.ForkJoinPool 桩。\n// 薄壳包装一个内部 ExecutorService（不实现工作窃取，桩级语义等价于普通线程池）。\n// commonPool() 返回进程级静态实例（刻意泄漏、永不销毁，避免进程退出时 join 问题）。\nclass ForkJoinPool : public Executor {\npublic:\n    // 默认构造：并行度取硬件并发数\n    ForkJoinPool();\n    explicit ForkJoinPool(std::size_t parallelism);\n    ~ForkJoinPool() override = default;\n\n    // 进程级公共池（对应 Java ForkJoinPool.commonPool()）\n    static ForkJoinPool* commonPool();\n    // 公共池并行度：硬件并发数，至少为 1\n    static int getCommonPoolParallelism();\n\n    // 提交无返回值任务（实现 Executor 接口）\n    void execute(std::function<void()> command) override;\n\n    // 提交带返回值任务（对应 Java Callable），模板方法必须在头文件实现\n    template<typename T>\n    std::shared_ptr<std::future<T>> submit(std::function<T()> task) {\n        return pool_.submit<T>(std::move(task));\n    }\n\n    // 停止接收新任务（对 commonPool 调用需谨慎，与 Java 语义一致）\n    void shutdown();\n\nprivate:\n    ExecutorService pool_;  // 内部实际承载任务的线程池\n};\n",
+  "cpp_code": "#include \"ForkJoinPool.h\"\n\nForkJoinPool::ForkJoinPool()\n    : pool_(static_cast<std::size_t>(getCommonPoolParallelism())) {}\n\nForkJoinPool::ForkJoinPool(std::size_t parallelism)\n    : pool_(parallelism == 0 ? 1 : parallelism) {}\n\nForkJoinPool* ForkJoinPool::commonPool() {\n    // 进程级单例，刻意不释放：避免静态析构阶段工作线程 join 的时序问题\n    static ForkJoinPool* pool = new ForkJoinPool();\n    return pool;\n}\n\nint ForkJoinPool::getCommonPoolParallelism() {\n    unsigned hc = std::thread::hardware_concurrency();\n    return static_cast<int>(hc == 0 ? 1 : hc);\n}\n\nvoid ForkJoinPool::execute(std::function<void()> command) {\n    pool_.execute(std::move(command));\n}\n\nvoid ForkJoinPool::shutdown() {\n    pool_.shutdown();\n}\n",
+  "methods": [
+    {
+      "java_signature": "java.util.concurrent.ForkJoinPool:<init>()",
+      "cpp_declaration": "ForkJoinPool();",
+      "body_location": "cpp"
+    },
+    {
+      "java_signature": "java.util.concurrent.ForkJoinPool:<init>(int)",
+      "cpp_declaration": "explicit ForkJoinPool(std::size_t parallelism);",
+      "body_location": "cpp"
+    },
+    {
+      "java_signature": "java.util.concurrent.ForkJoinPool:commonPool()",
+      "cpp_declaration": "static ForkJoinPool* commonPool(); // 进程级静态实例",
+      "body_location": "cpp"
+    },
+    {
+      "java_signature": "java.util.concurrent.ForkJoinPool:getCommonPoolParallelism()",
+      "cpp_declaration": "static int getCommonPoolParallelism();",
+      "body_location": "cpp"
+    },
+    {
+      "java_signature": "java.util.concurrent.ForkJoinPool:execute(java.lang.Runnable)",
+      "cpp_declaration": "void execute(std::function<void()> command) override;",
+      "body_location": "cpp"
+    },
+    {
+      "java_signature": "java.util.concurrent.ForkJoinPool:submit(java.util.concurrent.Callable)",
+      "cpp_declaration": "template<typename T> std::shared_ptr<std::future<T>> submit(std::function<T()> task);",
+      "body_location": "header"
+    },
+    {
+      "java_signature": "java.util.concurrent.ForkJoinPool:shutdown()",
+      "cpp_declaration": "void shutdown();",
+      "body_location": "cpp"
+    }
+  ]
+}
