@@ -2,9 +2,10 @@
 
 For each project this invokes `main.py --mode repair` with the SAME run id, so
 the repair agent starts from the already-repaired result/ directory and gets a
-fresh budget of `--max-repair-attempts` compilation attempts per still-failing
-file (link mode, same as the original batch). llm_usage.json is accumulated
-(main.py merges into the existing file), so token/time costs add up.
+fresh budget of repair attempts per still-failing file (link mode, same as the
+original batch). All repair budgets are fixed in main.py's standard config.
+llm_usage.json is accumulated (main.py merges into the existing file), so
+token/time costs add up.
 
 Usage (from repo root, conda env sitp):
     python approach/v4_7/scripts/run_sitp_extra_repair.py --workers 4
@@ -48,13 +49,7 @@ def run_project(project: str, args, batch_dir: Path) -> dict:
         "--ai", args.ai,
         "--project", project,
         "--run-id", args.run_id,
-        "--temperature", str(args.temperature),
-        "--compile-timeout", str(args.compile_timeout),
         "--mode", "repair",
-        "--apply-repair",
-        "--max-repair-attempts", str(args.max_repair_attempts),
-        "--max-tool-calls", str(args.max_tool_calls),
-        "--repair-test-suites", args.repair_test_suites,
     ]
     log_path = batch_dir / "extra_repair_logs" / f"{project}.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -95,11 +90,6 @@ def main() -> int:
     parser.add_argument("--ai", default="deepseek")
     parser.add_argument("--run-id", default=DEFAULT_RUN_ID)
     parser.add_argument("--workers", type=int, default=4)
-    parser.add_argument("--temperature", type=float, default=0.2)
-    parser.add_argument("--compile-timeout", type=int, default=60)
-    parser.add_argument("--max-repair-attempts", type=int, default=5)
-    parser.add_argument("--max-tool-calls", type=int, default=150, help="Maximum repair tool calls per project")
-    parser.add_argument("--repair-test-suites", default="base", metavar="SUITES", help="Functional test suites: base or base,additional")
     parser.add_argument("--projects", nargs="*", default=None, help="Subset of projects (default: all 28)")
     args = parser.parse_args()
 
@@ -113,15 +103,12 @@ def main() -> int:
     def write_summary():
         summary_path.write_text(
             json.dumps({"run_id": args.run_id, "ai": args.ai, "mode": "repair",
-                        "max_repair_attempts": args.max_repair_attempts,
-                        "max_tool_calls": args.max_tool_calls,
-                        "repair_test_suites": args.repair_test_suites,
                         "rows": rows},
                        ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
 
-    print(f"projects: {len(projects)}, workers: {args.workers}, extra repair attempts: {args.max_repair_attempts}, tool-call budget: {args.max_tool_calls}")
+    print(f"projects: {len(projects)}, workers: {args.workers}")
     with ThreadPoolExecutor(max_workers=args.workers) as pool:
         futures = {pool.submit(run_project, p, args, batch_dir): p for p in projects}
         for future in as_completed(futures):

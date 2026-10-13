@@ -38,8 +38,6 @@ def main() -> int:
     parser.add_argument("--run-ids", default="", help="Comma-separated run id filter.")
     parser.add_argument("--batch-name", default="", help="Output folder name under output/v4_7/batch_experiments.")
     parser.add_argument("--max-workers", type=int, default=6, help="Maximum concurrent repair processes.")
-    parser.add_argument("--max-repair-attempts", type=int, default=6)
-    parser.add_argument("--compile-timeout", type=int, default=60)
     parser.add_argument("--skip-compiled", action="store_true", help="Skip runs whose result compile summary has zero failed .cpp files.")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
@@ -75,8 +73,6 @@ def main() -> int:
         runs=runs,
         log_dir=log_dir,
         max_workers=args.max_workers,
-        max_repair_attempts=args.max_repair_attempts,
-        compile_timeout=args.compile_timeout,
     )
     _write_outputs(rows, batch_dir / "summary.csv", batch_dir / "summary.json")
     print(f"Wrote summary to {batch_dir / 'summary.csv'}")
@@ -112,8 +108,6 @@ def _run_parallel(
     runs: list[RepairRun],
     log_dir: Path,
     max_workers: int,
-    max_repair_attempts: int,
-    compile_timeout: int,
 ) -> list[dict[str, Any]]:
     pending = list(runs)
     active: list[dict[str, Any]] = []
@@ -123,7 +117,7 @@ def _run_parallel(
     while pending or active:
         while pending and len(active) < max_workers:
             run = pending.pop(0)
-            active.append(_start_process(run, log_dir, max_repair_attempts, compile_timeout))
+            active.append(_start_process(run, log_dir))
             print(f"Started [{len(rows) + len(active)}/{total}] {run.project} {run.run_id}")
 
         for item in list(active):
@@ -145,14 +139,13 @@ def _run_parallel(
 def _start_process(
     run: RepairRun,
     log_dir: Path,
-    max_repair_attempts: int,
-    compile_timeout: int,
 ) -> dict[str, Any]:
     safe_name = _safe_name(f"{run.project}__{run.run_id}")
     stdout_path = log_dir / f"{safe_name}.stdout.log"
     stderr_path = log_dir / f"{safe_name}.stderr.log"
     stdout_file = stdout_path.open("w", encoding="utf-8", errors="replace")
     stderr_file = stderr_path.open("w", encoding="utf-8", errors="replace")
+    # 修复预算与测试套件固定在 main.py 的标准配置中，这里只指定运行身份。
     command = [
         sys.executable,
         str(APPROACH_DIR / "main.py"),
@@ -164,11 +157,6 @@ def _start_process(
         "repair",
         "--run-id",
         run.run_id,
-        "--apply-repair",
-        "--max-repair-attempts",
-        str(max_repair_attempts),
-        "--compile-timeout",
-        str(compile_timeout),
     ]
     start = time.monotonic()
     proc = subprocess.Popen(

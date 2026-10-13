@@ -1,148 +1,236 @@
-# TranCoGlue — Paper Reproduction Package
+# TranCoGlue
 
-This repository is the reproduction package for the paper's module-level
-Java-to-C++ LLM translation study. It contains the full approach (`approach/`)
-and the 35-module benchmark (`source_projects/`).
+> Replication package for *"TranCoGlue: A Hierarchical Framework for
+> Module-Level Java-to-C++ Translation"* (under review).
 
-## 1. What the paper does
+TranCoGlue translates a **Java module** — a core class set plus its dependency
+closure — into a compilable, linkable, and test-passing C++ project. Instead of
+translating files or methods in isolation, TranCoGlue first builds class-hierarchy
+and method-call graphs over the whole module, then translates along those graphs
+so that every unit is generated conditioned on the units it depends on.
 
-The paper presents **TranCoGlue**, a hierarchical framework for module-level
-Java-to-C++ translation, together with an empirical study of how LLMs behave on
-this task.
+The pipeline runs in four stages:
 
-**Empirical study (RQ1–RQ2).** 35 modules from six open-source Java repositories
-(failsafe, jvm-sandbox, easyexcel, httpclient, hutool, Java-WebSocket; 787 Java
-files, 5,802 methods) are translated with three backbone LLMs (DeepSeek-V3.2,
-GPT-5.1, Qwen3.5-Plus) under three strategies: **PFT** (per-file translation),
-**PMT** (per-method translation), and **PMBT** (PMT with bottom-up call-graph
-ordering). The study finds that cross-file symbol consistency is the dominant
-bottleneck (undefined symbols are the largest error class under every strategy),
-and that translation order changes the error profile — the findings that motivate
-TranCoGlue's design.
+1. **Dependency Analysis** — parse the module into class-level and method-level
+   translation units, and build a class-hierarchy graph and a method call graph.
+   
+2. **Class Hierarchy Translation** — group class-level units into
+   dependency-aware batches (batch size 5, leaf-first), translate them group by
+   group into C++ headers, and iterate with compiler feedback.
+3. **Method Call Graph Translation** — layer the call graph topologically
+   and translate method bodies bottom-up, each
+   with its class's header and its already-translated callees as context.
+4. **Compilation-Feedback Repair** — merge headers and implementations into
+   `.cpp` files, compile in topological order, and let an autonomous agent
+   (`read_file` / `write_file` / `edit_file` / `create_file` / `compile`) repair
+   the remaining failures under bounded budgets.
 
-**The approach (four stages, `v4_7` pipeline).**
+---
 
-1. **Dependency analysis** — JavaParser-based parsing into class-level and
-   method-level translation units; construction of a class-hierarchy graph and a
-   method call graph. Hand-written C++ stubs (`source_projects/_cpp_stubs/`, JUC
-   etc.) are injected here as already-translated, read-only nodes.
-2. **Class hierarchy translation** — class-level units are grouped into
-   dependency-aware translation groups (leaf-first, batch size 5) and translated
-   group by group; each round is validated with `clang++ -fsyntax-only` and failed
-   units are regrouped and retranslated with diagnostics, for up to 5 rounds.
-3. **Method call graph translation** — the call graph is topologically layered
-   (Tarjan SCC folding for recursion) and translated bottom-up; each method's
-   prompt includes its class's C++ header and the already-translated callees.
-4. **Compilation-feedback repair** — headers and implementations are merged into
-   `.cpp` files and compiled in topological order; an autonomous agent
-   (`read_file` / `write_file` / `edit_file` / `create_file` / `compile`) repairs
-   failures with a budget of 10 repair attempts per failed file and 150 tool
-   calls per module.
+## ✨ Highlights
 
-**Evaluation (RQ3–RQ7).** RQ3 compares TranCoGlue against five baselines (PFT,
-PMT, PMBT, AlphaTrans-style, Oxidizer-style) on all 35 modules × 3 models; RQ4
-measures compilation-error reduction; RQ5 ablates grouping, iteration, context,
-and repair on a 9-module cohort with DeepSeek-V3.2; RQ6 sweeps the header batch
-size {1,2,3,4,5,6,9}; RQ7 reports token and time cost.
+- 🧩 **Module-level, graph-guided** — headers and methods are translated along
+  the class-hierarchy and call graphs, targeting the cross-file symbol
+  inconsistency that dominates per-file / per-method translation.
+- 🔁 **Compile-in-the-loop everywhere** — batched header iteration, per-file
+  `clang++` checks, and an agentic repair stage.
+- 🧠 **Backbone-agnostic** — the same pipeline runs under DeepSeek-V3.2, GPT-5.1 and Qwen3.5-Plus.
+- 📦 **Benchmark included** — the 35-module benchmark (787 Java files, 5,802
+  methods, 6 source repositories) ships in `source_projects/` with a manifest.
 
-**Metrics.** $CS_h$ / $CS_s$ / $CS_t$: compile-only pass rate of generated
-headers / `.cpp` files / both (micro-aggregated); $LS$: module-level link success
-rate; $TS$: pass rate of the 164 planned functional tests (unbuilt/crashed/
-timed-out count as failures); $Err(\#)$: deduplicated root compiler errors after
-cascade suppression; CoreCov: core-method coverage by the Java test suites.
+---
 
-## 2. Setup
+## 📁 Repository Layout
 
-See `approach/README.md` for full details. In short:
+```
+TranGoGlue/
+├── approach/                     TranCoGlue implementation
+│   ├── main.py                   CLI entry point (all experiments)
+│   ├── v4_7/                     the four-stage pipeline
+│   │   ├── steps/                stage drivers (graph → headers → methods → repair)
+│   │   └── scripts/              evaluation helpers (metrics, functional tests)
+│   ├── graph/                    persisted graph data model (JSON)
+│   ├── parser_tool/              Gradle/JavaParser tool: .java → structured JSON
+│   ├── utils/                    LLM client, config loading
+│   └── llm_config.example.json   provider configuration template
+├── source_projects/              the 35-module benchmark
+│   ├── <module>/                 one directory per module (flat or core+deps)
+│   ├── _cpp_stubs/               hand-written C++ stubs (JUC etc.)
+│   ├── modules_manifest.csv      per-module inventory (files, methods, layout)
+│   └── README.md                 benchmark documentation
+└── README.md                     this file
+```
+
+A run produces:
+
+```
+output/v4_7/<project>/<ai>/runs/<run_id>/
+├── graph/                        persisted project graph, headers, method nodes
+├── result/                       generated C++ files and run statistics
+│   ├── compile_report/           compilation evaluation
+│   ├── llm_trace.jsonl           per-call LLM usage
+│   ├── llm_usage.json            run-level usage summary
+│   └── stage_token_summary.json  token usage by stage
+└── review/                       agent repair working copy
+```
+
+---
+
+## 🧰 Requirements
+
+**Host environment.** Windows / Linux / macOS with:
+
+- **Python** ≥ 3.10 (the paper's runs used a Conda env named `sitp`);
+- **JDK 21** — the parser tool uses Gradle 8.14.3 and does not support newer JDKs;
+- **clang++** on `PATH` (the paper used clang++ 20.1.8);
+- **Gradle** (bootstrapped by `approach/parser_tool/`).
+
+**API keys.** At least one LLM provider is required. Copy the template and fill
+in `api_key` / `base_url` / `model_name` for the keys you plan to use
+(`deepseek`, `gpt`, `qwen`):
 
 ```powershell
-conda activate sitp                       # provides Python + deps
-$env:JAVA_HOME = '<JDK_21_HOME>'          # parser requires JDK 21
-clang++ --version                         # must be on PATH
 Copy-Item approach/llm_config.example.json approach/llm_config.json
-# fill in api_key / base_url / model_name for keys: deepseek, gpt, qwen
 $env:SITP_LLM_CONFIG_FILE = (Resolve-Path 'approach/llm_config.json').Path
+```
+
+> 💡 All providers are accessed through OpenAI-compatible chat endpoints; any
+> OpenAI-compatible gateway (e.g. OpenRouter) can be substituted via `base_url`.
+
+---
+
+## 🚀 Quick Start
+
+```powershell
+# from the repository root
+conda activate sitp                       # or your Python ≥ 3.10 env
+$python = Join-Path $env:CONDA_PREFIX 'python.exe'
+$env:JAVA_HOME = '<JDK_21_HOME>'          # parser requires JDK 21
 $env:SITP_SOURCE_PROJECTS_DIR = (Resolve-Path 'source_projects').Path
 $env:SITP_LLM_MAX_CONCURRENT_TASKS = '6'  # per-provider request concurrency
 ```
 
-All commands below run from the repository root with
-`$python = Join-Path $env:CONDA_PREFIX 'python.exe'` and take `--ai` in
-`{deepseek, gpt, qwen}` (DeepSeek-V3.2 / GPT-5.1 / Qwen3.5-Plus) and `--project`
-in the 35 module names. Runs are stored under
-`output/v4_7/<project>/<ai>/runs/<run_id>/` and resumable via `--resume` or
-`--run-id`.
-
-## 3. Main approach (RQ3)
-
-The paper's standard configuration — temperature 0.2, header batch size 5, 5
-header iteration rounds, 10 repair attempts per failed file, 150 module-wide
-repair tool calls, base+additional test suites:
+Run one module end-to-end in the paper's standard configuration:
 
 ```powershell
-& $python approach/main.py --ai deepseek --project Cookie --mode full `
-  --temperature 0.2 --header-batch-size 5 --header-max-rounds 5 `
-  --header-translation-mode batched_iterative --method-translation-mode contextual `
-  --allow-header-failures --compile-timeout 60 `
-  --repair-after-compile --apply-repair --max-repair-attempts 10 `
-  --max-tool-calls 150 
+& $python approach/main.py --ai deepseek --project Cookie --mode full
 ```
 
-## 4. Baselines (RQ3/RQ4/RQ7)
+All paper hyperparameters are **fixed per mode** in `approach/main.py`
+(`PAPER_STANDARD_CONFIG`: temperature 0.2, header batch size 5, 5 header
+iteration rounds, 10 repair attempts per failed file, 150 module-wide repair
+tool calls, `base,additional` test suites) — the command line only selects the
+backbone model, the project, and the experiment entry (`--mode`).
 
-AlphaTrans-style and Oxidizer-style baselines are built into `main.py`:
+Outputs land in `output/v4_7/Cookie/deepseek/runs/<run_id>/`. Resume an
+interrupted run with `--resume`, rerun only the agent repair stage on an
+existing run with `--mode repair --run-id <id>`.
+
+---
+
+## 🧪 Reproducing the Evaluation
+
+All commands run from the repository root. `$ai` ∈ `{deepseek, gpt, qwen}`
+(DeepSeek-V3.2 / GPT-5.1 / Qwen3.5-Plus); `$project` ∈ the 35 module names in `source_projects`
+
+### 🎯 Overall Effectiveness (RQ3) and Error Reduction (RQ4)
+
+Run TranCoGlue in the standard configuration (`--mode full`) for every
+(module, model) pair — 35 modules × 3 models. Loop over modules:
 
 ```powershell
-# AlphaTrans-style baseline (skeleton-driven agentic translation)
-& $python approach/main.py --ai deepseek --project Cookie --mode alphatrans-baseline `
-  --temperature 0.2 --compile-timeout 60 --max-repair-attempts 10 `
-  --fragment-max-tries 10 --feature-requery-budget 10
-
-# Oxidizer-style baseline (type-driven compile-first fragments)
-& $python approach/main.py --ai deepseek --project Cookie --mode oxidizer-baseline `
-  --temperature 0.2 --compile-timeout 60 --max-repair-attempts 10 `
-  --fragment-max-tries 10 --feature-requery-budget 10
+foreach ($m in Get-Content module_list.txt) {
+  & $python approach/main.py --ai $ai --project $m --mode full
+}
 ```
 
-(`--mode direct-translation` and `--mode react-baseline` are also available.)
-The PFT / PMT / PMBT baselines were run with the legacy v3 / v4 / v4_1 pipelines,
-which are not part of this package.
+The two agentic baselines (AlphaTrans-style and Oxidizer-style) are separate
+modes with their own fixed configurations:
 
-## 5. Ablation study (RQ5)
+```powershell
+# AlphaTrans-style (skeleton-driven agentic translation)
+& $python approach/main.py --ai $ai --project $m --mode alphatrans-baseline
 
-All ablations start from the standard configuration of section 3 (DeepSeek-V3.2,
-9-module cohort) and change one aspect:
+# Oxidizer-style (type-driven compile-first fragments)
+& $python approach/main.py --ai $ai --project $m --mode oxidizer-baseline
+```
 
-| Group | Change | Command-line difference |
+### 🧩 Ablation Study (RQ5)
+
+Nine-module cohort, DeepSeek-V3.2. Each ablation is its own `--mode` that
+changes exactly one aspect of the standard configuration:
+
+| Group | Change | Mode |
 | --- | --- | --- |
-| complete | none | section 3 as-is |
-| Header-OneShot | no grouping, no feedback rounds | `--header-translation-mode per_file_one_shot --header-max-rounds 1` |
-| w/o Grouping | one header per request, feedback kept | `--header-batch-size 1` |
-| w/o Context | no translated-callee context | `--method-translation-mode no_context` |
-| w/o Repair | repair stage disabled | drop `--repair-after-compile --apply-repair` |
+| complete | none | `--mode full` |
+| Header-OneShot | no grouping, no feedback rounds | `--mode ablation-header-oneshot` |
+| w/o Grouping | one header per request, feedback kept | `--mode ablation-wo-grouping` |
+| w/o Context | no translated-callee context in method prompts | `--mode ablation-wo-context` |
+| w/o Repair | repair stage disabled | `--mode ablation-wo-repair` |
 
 Example (w/o Context):
 
 ```powershell
-& $python approach/main.py --ai deepseek --project Cookie --mode full `
-  --temperature 0.2 --header-batch-size 5 --header-max-rounds 5 `
-  --header-translation-mode batched_iterative --method-translation-mode no_context `
-  --allow-header-failures --compile-timeout 60 `
-  --repair-after-compile --apply-repair --max-repair-attempts 10 `
-  --max-tool-calls 150
+& $python approach/main.py --ai deepseek --project Cookie --mode ablation-wo-context
 ```
 
-## 6. Header batch-size sensitivity (RQ6)
+### 📏 Header Batch-Size Sensitivity (RQ6)
 
-Repeat the standard run with `--header-batch-size` in `{1, 2, 3, 4, 5, 6, 9}`;
-batch size 5 is identical to the section-3 configuration.
+Repeat the standard run (DeepSeek-V3.2, same 9-module cohort) with
+`--mode rq6-batch-size --header-batch-size N` for `N` in
+`{1, 2, 3, 4, 5, 6, 9}`. Batch size 5 is identical to `--mode full` and needs
+no separate run.
 
-## 7. Notes
+### ⏱️ Cost and Time Overhead (RQ7)
 
-- After changing source layouts, delete `output/v4_7/<project>/split` or pass
-  `--force-rebuild`; otherwise stale graphs are silently reused.
-- `--max-tool-calls` defaults to an auto-scaled budget
-  (`max(150, 10 per header)`).
-- If a run is interrupted, resume it with the same `--run-id` and the `--mode`
-  of the stage to continue (`header` / `mapping` / `method` / `compile` /
-  `repair`).
+Token usage is recorded per run in `result/llm_trace.jsonl`,
+`result/llm_usage.json`, and `result/stage_token_summary.json`; wall time is the
+run duration. Compare against the two agentic baselines (section RQ3) on the
+35 modules with DeepSeek-V3.2.
+
+---
+
+## ⚙️ Configuration Reference
+
+`approach/main.py --help` lists every option. The command line only exposes
+the experiment entries and operational flags:
+
+| Option | Meaning |
+| --- | --- |
+| `--ai` | Backbone model key (`deepseek` / `gpt` / `qwen`) |
+| `--project` | Module name from `source_projects/modules_manifest.csv` |
+| `--mode` | Experiment entry: `full`, `ablation-header-oneshot`, `ablation-wo-grouping`, `ablation-wo-context`, `ablation-wo-repair`, `rq6-batch-size`, `alphatrans-baseline`, `oxidizer-baseline`, `repair` |
+| `--header-batch-size` | Batch size for `--mode rq6-batch-size` only (required there) |
+| `--run-id` / `--resume` / `--force-rebuild` | Run identity and resume control |
+| `--test` | Offline mock mode for the LLM generator |
+
+---
+
+## 📦 Output and Metrics
+
+Each run is evaluated on the paper's metrics from its `result/` directory:
+
+- $CS_h$ / $CS_s$ / $CS_t$ — compile-only pass rates of generated headers,
+  `.cpp` files, and both (micro-aggregated);
+- $LS$ — module-level link success;
+- $TS$ — pass rate of the planned functional tests (unbuilt / crashed /
+  timed-out count as failures);
+- $Err(\#)$ — deduplicated root compiler errors (Undefined Symbols / Duplicated
+  Definitions / Header File Error / Other);
+- CoreCov — core-method coverage by the Java test suites.
+
+Evaluation helpers live in `approach/v4_7/scripts/` (per-run compilation
+evaluation, functional-test evaluation). Repaired files stay under `review/`
+unless `--apply-repair` copies them back into `result/`.
+
+---
+
+## 🙏 Acknowledgements
+
+The benchmark modules are drawn from
+[failsafe-lib/failsafe](https://github.com/failsafe-lib/failsafe),
+[alibaba/jvm-sandbox](https://github.com/alibaba/jvm-sandbox),
+[alibaba/easyexcel](https://github.com/alibaba/easyexcel),
+[TooTallNate/Java-WebSocket](https://github.com/TooTallNate/Java-WebSocket),
+Apache HttpClient, and [dromara/hutool](https://github.com/dromara/hutool).
+We are grateful to their authors and maintainers.

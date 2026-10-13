@@ -7,8 +7,8 @@
     并把新结果合并回同一份 aggregate.json，从而续跑而非全量重跑。
 
     它直接复用 run_alphatrans_pilot 里的 _run_project 命令构造逻辑，
-    保证与原始实验的调用方式（--mode alphatrans-baseline、run-id、
-    temperature、compile-timeout、max-repair-attempts）完全一致。
+    保证与原始实验的调用方式（--mode alphatrans-baseline、run-id）完全一致；
+    除批大小外的超参数固定在 main.py 的实验配置中。
 
 参数：
     --experiment-id：原始实验 ID（默认 20260818_alphatrans_r10_full）
@@ -51,9 +51,7 @@ def main() -> int:
     parser.add_argument("--experiment-id", default=EXPERIMENT_ID)
     parser.add_argument("--workers", type=int, default=WORKERS)
     parser.add_argument("--ai", default="deepseek")
-    parser.add_argument("--temperature", type=float, default=0.2)
-    parser.add_argument("--compile-timeout", type=int, default=60)
-    parser.add_argument("--max-repair-attempts", type=int, default=10)
+    parser.add_argument("--compile-timeout", type=int, default=60, help="Timeout for the runner's own evaluation step")
     parser.add_argument("--projects", nargs="*", default=[], help="若提供则只跑这些项目")
     args = parser.parse_args()
 

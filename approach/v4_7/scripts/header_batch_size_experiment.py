@@ -48,38 +48,6 @@ def main() -> int:
         default="",
         help="Optional comma-separated batch_size:project pairs; overrides the full matrix.",
     )
-    parser.add_argument("--header-max-rounds", type=int, default=5)
-    parser.add_argument(
-        "--header-grouping-strategy",
-        choices=["dependency", "random"],
-        default="dependency",
-        help="Header 分组策略；random 随机打散后按 batch size 切分。",
-    )
-    parser.add_argument(
-        "--header-grouping-seed",
-        type=int,
-        default=None,
-        help="random 分组策略的可复现随机种子。",
-    )
-    parser.add_argument(
-        "--mode",
-        choices=["header", "full"],
-        default="header",
-        help="执行仅 header 阶段或完整翻译流水线。",
-    )
-    parser.add_argument(
-        "--repair-after-compile",
-        action="store_true",
-        help="在 full 模式下执行最终编译修复。",
-    )
-    parser.add_argument(
-        "--apply-repair",
-        action="store_true",
-        help="将最终修复后的文件回写到运行结果。",
-    )
-    parser.add_argument("--compile-timeout", type=int, default=60)
-    parser.add_argument("--max-repair-attempts", type=int, default=10)
-    parser.add_argument("--max-tool-calls", type=int, default=150)
     parser.add_argument("--max-workers", type=int, default=5)
     parser.add_argument("--batch-name", default="")
     parser.add_argument("--skip-completed", action="store_true")
@@ -92,8 +60,6 @@ def main() -> int:
         parser.error("projects and batch sizes must not be empty")
     if any(size < 1 for size in batch_sizes):
         parser.error("batch sizes must be positive")
-    if args.header_max_rounds < 1:
-        parser.error("header max rounds must be positive")
 
     batch_name = args.batch_name or datetime.now().strftime(
         "%Y%m%d_%H%M%S_header_batch_size_r5"
@@ -113,17 +79,8 @@ def main() -> int:
             ai=args.ai,
             project=project,
             batch_size=batch_size,
-            max_rounds=args.header_max_rounds,
             batch_name=batch_name,
             log_dir=log_dir,
-            mode=args.mode,
-            repair_after_compile=args.repair_after_compile,
-            apply_repair=args.apply_repair,
-            compile_timeout=args.compile_timeout,
-            max_repair_attempts=args.max_repair_attempts,
-            max_tool_calls=args.max_tool_calls,
-            header_grouping_strategy=args.header_grouping_strategy,
-            header_grouping_seed=args.header_grouping_seed,
         )
         for batch_size, project in job_pairs
     ]
@@ -132,15 +89,6 @@ def main() -> int:
         "ai": args.ai,
         "projects": projects,
         "batch_sizes": batch_sizes,
-        "header_max_rounds": args.header_max_rounds,
-        "header_grouping_strategy": args.header_grouping_strategy,
-        "header_grouping_seed": args.header_grouping_seed,
-        "mode": args.mode,
-        "repair_after_compile": args.repair_after_compile,
-        "apply_repair": args.apply_repair,
-        "compile_timeout": args.compile_timeout,
-        "max_repair_attempts": args.max_repair_attempts,
-        "max_tool_calls": args.max_tool_calls,
         "max_workers": args.max_workers,
         "jobs": jobs,
     })
@@ -209,33 +157,19 @@ def _make_job(
     ai: str,
     project: str,
     batch_size: int,
-    max_rounds: int,
     batch_name: str,
     log_dir: Path,
-    mode: str,
-    repair_after_compile: bool,
-    apply_repair: bool,
-    compile_timeout: int,
-    max_repair_attempts: int,
-    max_tool_calls: int,
-    header_grouping_strategy: str,
-    header_grouping_seed: int | None,
 ) -> dict[str, Any]:
     """构造单个 batch-size 组合的独立运行命令。
+
+    除批大小外的全部超参数固定在 main.py 的 rq6-batch-size 模式中。
 
     参数：
         ai: 模型标识。
         project: 项目名称。
         batch_size: 当前 header 批大小。
-        max_rounds: header 最大反馈轮数。
         batch_name: 批处理名称，同时构成唯一 run ID。
         log_dir: 标准输出和错误日志目录。
-        mode: 执行模式（header 或 full）。
-        repair_after_compile: 是否执行最终编译修复。
-        apply_repair: 是否回写修复产物。
-        compile_timeout: 单个 C++ 文件的编译超时秒数。
-        max_repair_attempts: 单文件最大修复尝试数。
-        max_tool_calls: 单项目修复工具调用预算。
 
     返回：
         可供子进程执行和结果汇总的任务字典。
@@ -249,31 +183,12 @@ def _make_job(
         "--project",
         project,
         "--mode",
-        mode,
+        "rq6-batch-size",
         "--header-batch-size",
         str(batch_size),
-        "--header-max-rounds",
-        str(max_rounds),
         "--run-id",
         run_id,
-        "--allow-header-failures",
-        "--header-grouping-strategy",
-        header_grouping_strategy,
     ]
-    if header_grouping_seed is not None:
-        command.extend(["--header-grouping-seed", str(header_grouping_seed)])
-    if mode == "full":
-        command.extend(["--compile-timeout", str(compile_timeout)])
-        if repair_after_compile:
-            command.extend([
-                "--repair-after-compile",
-                "--max-repair-attempts",
-                str(max_repair_attempts),
-                "--max-tool-calls",
-                str(max_tool_calls),
-            ])
-        if apply_repair:
-            command.append("--apply-repair")
     run_dir = (
         PROJECT_ROOT / "output" / VERSION / project / ai / "runs" / run_id
     )
@@ -281,10 +196,8 @@ def _make_job(
         "project": project,
         "ai": ai,
         "batch_size": batch_size,
-        "header_max_rounds": max_rounds,
-        "mode": mode,
-        "header_grouping_strategy": header_grouping_strategy,
-        "header_grouping_seed": header_grouping_seed,
+        # 固定为标准配置的反馈轮数，仅用于汇总输出中的字段兼容。
+        "header_max_rounds": 5,
         "run_id": run_id,
         "run_dir": str(run_dir),
         "stdout_log": str(log_dir / f"bs{batch_size}_{project}.stdout.log"),

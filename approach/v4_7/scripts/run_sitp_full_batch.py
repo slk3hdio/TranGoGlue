@@ -1,7 +1,9 @@
 """Run the SITP v4_7 full pipeline over all 28 projects in parallel.
 
-Each project runs as a separate `main.py --mode full` subprocess with a fixed
-run id, so re-running this script resumes unfinished projects. Per-project
+Each project runs as a separate `main.py --mode <experiment>` subprocess with a
+fixed run id, so re-running this script resumes unfinished projects. The
+experiment (standard pipeline or one of the ablation groups) is selected with
+`--experiment`; all paper hyperparameters are fixed inside main.py. Per-project
 stdout/stderr goes to a log file under the batch output directory. When a
 project finishes, its exit code, wall time and llm_usage.json (token cost)
 are collected into batch_summary.json.
@@ -41,7 +43,6 @@ def run_project(project: str, args, batch_dir: Path) -> dict:
     返回:
         包含退出码、耗时和用量信息的结果字典。
     """
-    """运行单个项目，并将消融模式写入独立 run 的命令和日志。"""
     run_dir = PROJECT_ROOT / "output" / "v4_7" / project / args.ai / "runs" / args.run_id
     result_dir = run_dir / "result"
     usage_path = result_dir / "llm_usage.json"
@@ -54,23 +55,8 @@ def run_project(project: str, args, batch_dir: Path) -> dict:
         "--ai", args.ai,
         "--project", project,
         "--run-id", args.run_id,
-        "--temperature", str(args.temperature),
-        "--compile-timeout", str(args.compile_timeout),
-        "--mode", "full",
-        "--header-batch-size", str(args.header_batch_size),
-        "--header-max-rounds", str(args.header_max_rounds),
-        "--header-translation-mode", args.header_translation_mode,
-        "--method-translation-mode", args.method_translation_mode,
-        "--allow-header-failures",
+        "--mode", args.experiment,
     ]
-    if not args.no_repair:
-        command.extend([
-            "--repair-after-compile",
-            "--apply-repair",
-            "--max-repair-attempts", str(args.max_repair_attempts),
-            "--max-tool-calls", str(args.max_tool_calls),
-            "--repair-test-suites", args.repair_test_suites,
-        ])
     log_path = batch_dir / "logs" / f"{project}.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
     started = time.monotonic()
@@ -103,26 +89,15 @@ def main() -> int:
     parser.add_argument("--ai", default="deepseek")
     parser.add_argument("--run-id", default=DEFAULT_RUN_ID)
     parser.add_argument("--workers", type=int, default=4)
-    parser.add_argument("--temperature", type=float, default=0.2)
-    parser.add_argument("--compile-timeout", type=int, default=60)
-    parser.add_argument("--header-batch-size", type=int, default=3)
-    parser.add_argument("--header-max-rounds", type=int, default=5)
-    parser.add_argument("--max-repair-attempts", type=int, default=5)
-    parser.add_argument("--max-tool-calls", type=int, default=150, help="每个项目 repair 阶段的工具调用总预算")
-    parser.add_argument("--repair-test-suites", default="base", metavar="SUITES", help="repair 测试套件：base 或 base,additional")
-    parser.add_argument("--no-repair", action="store_true", help="仅执行 header/method 翻译和编译检查，不运行最终 repair")
-    parser.add_argument("--ablation-group", choices=["G0", "G1", "G2", "G3"], default="G0")
+    parser.add_argument(
+        "--experiment",
+        choices=["full", "ablation-header-oneshot", "ablation-wo-grouping", "ablation-wo-context", "ablation-wo-repair"],
+        default="full",
+        help="Experiment entry forwarded to main.py --mode; hyperparameters are fixed in main.py",
+    )
     parser.add_argument("--force", action="store_true", help="Re-run projects even if llm_usage.json exists")
     parser.add_argument("--projects", nargs="*", default=None, help="Subset of projects (default: all 28)")
     args = parser.parse_args()
-
-    modes = {
-        "G0": ("batched_iterative", "contextual"),
-        "G1": ("per_file_one_shot", "contextual"),
-        "G2": ("batched_iterative", "no_context"),
-        "G3": ("per_file_one_shot", "no_context"),
-    }
-    args.header_translation_mode, args.method_translation_mode = modes[args.ablation_group]
 
     projects = args.projects or cfg_all_project_names("v4_7")
     batch_dir = PROJECT_ROOT / "output" / "v4_7" / "experiments" / args.run_id
@@ -149,8 +124,7 @@ def main() -> int:
                 {
                     "run_id": args.run_id,
                     "ai": args.ai,
-                    "max_tool_calls": args.max_tool_calls,
-                    "repair_test_suites": args.repair_test_suites,
+                    "experiment": args.experiment,
                     "rows": rows,
                 },
                 ensure_ascii=False,

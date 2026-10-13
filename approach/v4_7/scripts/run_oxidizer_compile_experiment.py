@@ -37,15 +37,12 @@ def main() -> int:
     parser.add_argument("--phase", choices=["pilot", "full"], default="pilot")
     parser.add_argument("--strategy", choices=["sitp", "oxidizer", "both"], default="both")
     parser.add_argument("--ai", default="deepseek")
-    parser.add_argument("--temperature", type=float, default=0.2)
-    parser.add_argument("--compile-timeout", type=int, default=60)
     parser.add_argument("--experiment-id", default="")
     parser.add_argument("--workers", type=int, default=1)
-    parser.add_argument("--fragment-max-tries", type=int, default=5)
+    parser.add_argument("--compile-timeout", type=int, default=60, help="Timeout for this runner's own evaluation step")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
     args.workers = max(1, args.workers)
-    args.fragment_max_tries = max(1, args.fragment_max_tries)
 
     invocation_started = time.monotonic()
     experiment_id = args.experiment_id or datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -182,28 +179,9 @@ def _command(args, strategy: str, project: str, run_id: str) -> list[str]:
         "--ai", args.ai,
         "--project", project,
         "--run-id", run_id,
-        "--temperature", str(args.temperature),
-        "--compile-timeout", str(args.compile_timeout),
+        # 两种策略的超参数均固定在 main.py 的实验配置中，这里只选择模式。
+        "--mode", "oxidizer-baseline" if strategy == "oxidizer" else "full",
     ]
-    if strategy == "oxidizer":
-        command.extend(
-            [
-                "--mode", "oxidizer-baseline",
-                "--feature-requery-budget", "10",
-                "--fragment-max-tries", str(args.fragment_max_tries),
-            ]
-        )
-    else:
-        command.extend(
-            [
-                "--mode", "full",
-                "--header-batch-size", "3",
-                "--header-max-rounds", "10",
-                "--repair-after-compile",
-                "--apply-repair",
-                "--max-repair-attempts", "15",
-            ]
-        )
     return command
 
 
@@ -325,10 +303,8 @@ def _write_aggregate(
         "experiment": {
             "phase": args.phase,
             "ai": args.ai,
-            "temperature": args.temperature,
             "repetitions": 1,
             "workers": args.workers,
-            "fragment_max_tries": args.fragment_max_tries,
             "tuning_projects": PILOT_PROJECTS,
         },
         "timing": {

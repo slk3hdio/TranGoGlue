@@ -15,6 +15,104 @@ from v4_7.steps.translation_pipeline import TranslationPipeline
 
 version = 'v4_7'
 
+# 论文标准配置：除实验变量外的全部超参数在此固定，命令行不再暴露。
+# 数值与 README "Reproducing the Evaluation" 一节保持一致，改动需同步文档。
+PAPER_STANDARD_CONFIG: dict = {
+    "temperature": 0.2,
+    "compile_timeout": 60,
+    "header_batch_size": 5,
+    "header_max_rounds": 5,
+    "header_translation_mode": "batched_iterative",
+    "method_translation_mode": "contextual",
+    "header_grouping_strategy": "dependency",
+    "header_grouping_seed": None,
+    "allow_header_failures": True,
+    "repair_after_compile": True,
+    "apply_repair": True,
+    "max_repair_attempts": 10,
+    "max_tool_calls": 150,
+    "repair_test_suites": "base,additional",
+}
+
+# 消融实验（README RQ5）：在标准配置上每次只改一个方面。
+ABLATION_OVERRIDES: dict[str, dict] = {
+    # Header-OneShot：取消分组与反馈迭代，每个 header 一次生成。
+    "ablation-header-oneshot": {
+        "header_translation_mode": "per_file_one_shot",
+        "header_max_rounds": 1,
+    },
+    # w/o Grouping：每次只翻译一个 header，反馈迭代保留。
+    "ablation-wo-grouping": {
+        "header_batch_size": 1,
+    },
+    # w/o Context：方法翻译提示中不含已翻译被调方法上下文。
+    "ablation-wo-context": {
+        "method_translation_mode": "no_context",
+    },
+    # w/o Repair：关闭 agent 修复阶段。
+    "ablation-wo-repair": {
+        "repair_after_compile": False,
+        "apply_repair": False,
+    },
+}
+
+# 对比基线（README RQ3）：独立流水线，仅共享固定的温度、编译超时与重试预算。
+BASELINE_CONFIGS: dict[str, dict] = {
+    "alphatrans-baseline": {
+        "temperature": 0.2,
+        "compile_timeout": 60,
+        "max_repair_attempts": 10,
+        "fragment_max_tries": 10,
+        "feature_requery_budget": 10,
+    },
+    "oxidizer-baseline": {
+        "temperature": 0.2,
+        "compile_timeout": 60,
+        "fragment_max_tries": 10,
+        "feature_requery_budget": 10,
+        "type_compatibility": True,
+    },
+}
+
+# 命令行暴露的全部模式：完整流程、消融、RQ6 批量敏感性、对比基线，
+# 另保留 repair 作为对已有运行单独重跑修复阶段的运维入口。
+EXPERIMENT_MODES: tuple[str, ...] = (
+    "full",
+    *ABLATION_OVERRIDES.keys(),
+    "rq6-batch-size",
+    *BASELINE_CONFIGS.keys(),
+)
+CLI_MODES: tuple[str, ...] = (*EXPERIMENT_MODES, "repair")
+
+# 需要配置 LLM 追踪与阶段 token 汇总的标准流水线模式（基线自行管理追踪）。
+STANDARD_PIPELINE_MODES: frozenset[str] = frozenset(
+    {"full", "repair", *ABLATION_OVERRIDES.keys(), "rq6-batch-size"}
+)
+
+
+def resolve_experiment_config(mode: str, header_batch_size: int | None = None) -> dict:
+    """按实验入口解析该模式对应的完整参数配置。
+
+    参数：
+        mode: 实验模式名（full / ablation-* / rq6-batch-size / 基线 / repair）。
+        header_batch_size: 仅 rq6-batch-size 模式使用的 header 批量大小，
+            其余模式下必须为 None。
+
+    返回：
+        dict: 可直接作为 main() 关键字参数展开的配置。
+    """
+    # repair 单独重跑修复：沿用标准配置中的修复预算与测试套件。
+    if mode == "repair":
+        return dict(PAPER_STANDARD_CONFIG)
+    if mode in BASELINE_CONFIGS:
+        return dict(BASELINE_CONFIGS[mode])
+    config = dict(PAPER_STANDARD_CONFIG)
+    if mode in ABLATION_OVERRIDES:
+        config.update(ABLATION_OVERRIDES[mode])
+    elif mode == "rq6-batch-size":
+        config["header_batch_size"] = int(header_batch_size)
+    return config
+
 
 def _write_llm_usage(output_dir: str, ai_name: str, temperature: float, mode: str, run_id: str, started_at: float) -> None:
     """Persist process-wide LLM token usage and wall time for cost reporting.
@@ -172,7 +270,8 @@ def main(
         snapshot_source: Oxidizer 兼容性校验用的 JSON 源执行快照路径。
         snapshot_target: Oxidizer 兼容性校验用的 JSON C++ 执行快照路径。
         snapshot_validation: 是否启用可选的 canonical JSON 快照校验。
-        mode: 翻译模式（full/header/mapping/method/compile/repair 或某 baseline）。
+        mode: 实验模式（full / ablation-* / rq6-batch-size / 基线 / repair），
+            具体超参数由 resolve_experiment_config 固定，不再逐个透传。
         run_id: 指定使用已有运行 ID（为空时新建或按 resume 续跑）。
 
     返回：
@@ -233,8 +332,7 @@ def main(
             enable_thinking=True if mapping_thinking else None,
         )
     result_trace_dir = Path(output_dir) / "result"
-    standard_pipeline_modes = {"full", "header", "mapping", "method", "repair"}
-    if mode in standard_pipeline_modes:
+    if mode in STANDARD_PIPELINE_MODES:
         result_trace_dir.mkdir(parents=True, exist_ok=True)
         generator.configure_trace(str(result_trace_dir / "llm_trace.jsonl"))
     started_at = time.monotonic()
@@ -255,33 +353,7 @@ def main(
         mapping_generator=mapping_generator,
     )
 
-    if mode == "header":
-        pipeline.run_header_translation(
-            ai_name,
-            project_name,
-            force_rebuild=force_rebuild,
-            run_id=run_id,
-            allow_failures=allow_header_failures,
-        )
-    elif mode == "mapping":
-        pipeline.run_method_mapping(ai_name, project_name, force_rebuild=force_rebuild, run_id=run_id, clear_method_progress=clear_method_progress)
-    elif mode == "method":
-        pipeline.run_method_translation(
-            ai_name,
-            project_name,
-            force_rebuild=force_rebuild,
-            run_id=run_id,
-            clear_method_progress=clear_method_progress,
-            skip_mapping=skip_mapping,
-            skip_cpp_compile=skip_cpp_compile,
-            repair_after_compile=repair_after_compile,
-            max_repair_attempts=max_repair_attempts,
-            apply_repair=apply_repair,
-            max_tool_calls=max_tool_calls,
-        )
-    elif mode == "compile":
-        pipeline.run_cpp_compile_check(ai_name, project_name, force_rebuild=force_rebuild, run_id=run_id)
-    elif mode == "repair":
+    if mode == "repair":
         pipeline.run_agent_repair(
             ai_name,
             project_name,
@@ -307,29 +379,6 @@ def main(
             run_id=run_id,
             max_feedback_rounds=max_repair_attempts,
         )
-    elif mode == "react-baseline":
-        from v4_7.baselines.react_style.pipeline import ReactStylePipeline
-
-        baseline = ReactStylePipeline(
-            generator,
-            max_compile_attempts=max_repair_attempts,
-            compile_timeout=compile_timeout,
-        )
-        baseline.run(
-            ai_name,
-            project_name,
-            force_rebuild=force_rebuild,
-            run_id=run_id,
-        )
-    elif mode == "direct-translation":
-        from v4_7.baselines.direct_translation.pipeline import DirectTranslationPipeline
-
-        baseline = DirectTranslationPipeline(
-            generator,
-            max_feedback_rounds=max_repair_attempts,
-            compile_timeout=compile_timeout,
-        )
-        baseline.run(ai_name, project_name, run_id=run_id)
     elif mode == "oxidizer-baseline":
         from v4_7.baselines.oxidizer_style import OxidizerStylePipeline
 
@@ -378,39 +427,64 @@ if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser(
         prog="TranGoGlue",
-        description="TranGoGlue Java-to-C++ translation pipeline",
+        description=(
+            "TranGoGlue Java-to-C++ translation pipeline. "
+            "All paper hyperparameters are fixed per experiment mode; "
+            "only the backbone model, project and mode are selectable."
+        ),
     )
-    parser.add_argument("--ai", required=True, help="AI model name")
-    parser.add_argument("--mapping-ai", default="", help="方法映射阶段单独使用的模型；默认与 --ai 一致")
-    parser.add_argument("--mapping-thinking", action=argparse.BooleanOptionalAction, default=True, help="方法映射模型开启思考模式（默认开启，--no-mapping-thinking 关闭）")
-    parser.add_argument("--project", required=True, help="Project name")
-    parser.add_argument("--test", action="store_true", help="Test mode")
+    # 实验选择：模型、项目与实验模式。
+    parser.add_argument("--ai", required=True, help="Backbone model key registered in utils/api.py (deepseek/gpt/qwen)")
+    parser.add_argument("--project", required=True, help="Project (module) name under source_projects/")
+    parser.add_argument(
+        "--mode",
+        choices=CLI_MODES,
+        default="full",
+        help=(
+            "Experiment entry: full pipeline, ablation groups "
+            "(ablation-header-oneshot / ablation-wo-grouping / ablation-wo-context / "
+            "ablation-wo-repair), rq6-batch-size sweep, baselines "
+            "(alphatrans-baseline / oxidizer-baseline), or repair-only on an existing run"
+        ),
+    )
+    # RQ6 批量敏感性扫描的唯一可变参数。
+    parser.add_argument(
+        "--header-batch-size",
+        type=int,
+        default=None,
+        help="Header batch size; only valid (required) with --mode rq6-batch-size",
+    )
+    # 运维参数：运行定位与续跑，不影响实验配置。
+    parser.add_argument("--run-id", default="", help="Use a specific existing run id instead of creating a new run")
     parser.add_argument("--resume", action="store_true", help="Resume the most recent run")
     parser.add_argument("--force-rebuild", action="store_true", help="Force rebuild from scratch")
-    parser.add_argument("--clear-method-progress", action="store_true", help="Clear method mapping/translation progress before running mapping or method translation")
-    parser.add_argument("--skip-mapping", action="store_true", help="Skip the LLM-based Java-to-C++ method mapping step (ablation)")
-    parser.add_argument("--skip-cpp-compile", action="store_true", help="Skip final C++ implementation file compile check in full or method mode")
-    parser.add_argument("--compile-timeout", type=int, default=60, help="Timeout in seconds for each C++ file compile check")
-    parser.add_argument("--repair-after-compile", action="store_true", help="Run agent repair after C++ compile check in full or method mode")
-    parser.add_argument("--max-repair-attempts", type=int, default=5, help="Maximum compile attempts per failed C++ file during agent repair")
-    parser.add_argument("--apply-repair", action="store_true", help="Copy repaired .h/.cpp files from review back to result")
-    parser.add_argument("--max-tool-calls", type=int, default=None, help="Project-level maximum repair tool calls; default auto-scales with module size (max(150, 10 per header))")
-    parser.add_argument("--header-batch-size", type=int, default=3, help="Header batch size")
-    parser.add_argument("--header-max-rounds", type=int, default=5, help="Maximum header iteration rounds (1 disables iterative feedback)")
-    parser.add_argument("--header-translation-mode", choices=["batched_iterative", "per_file_one_shot"], default="batched_iterative", help="Header ablation mode")
-    parser.add_argument("--method-translation-mode", choices=["contextual", "no_context"], default="contextual", help="Method ablation mode")
-    parser.add_argument("--header-grouping-strategy", choices=["dependency", "random"], default="dependency", help="Header grouping strategy")
-    parser.add_argument("--header-grouping-seed", type=int, default=None, help="Reproducible seed for random header grouping")
-    parser.add_argument("--allow-header-failures", action="store_true", help="Continue full/header mode after header translation fails to converge")
-    parser.add_argument("--repair-test-suites", default="base", metavar="SUITES", help="Functional test suites used by repair: base or base,additional")
-    parser.add_argument("--temperature", type=float, default=0.2, help="LLM sampling temperature")
-    parser.add_argument("--feature-requery-budget", type=int, default=10, help="Maximum feature-mapping retries per candidate")
-    parser.add_argument("--fragment-max-tries", type=int, default=5, help="Maximum compiler-feedback attempts per Oxidizer fragment")
-    parser.add_argument("--disable-type-compatibility", action="store_true", help="Disable Oxidizer static type-compatibility checks")
-    parser.add_argument("--snapshot-source", default="", help="JSON source execution snapshots for Oxidizer compatibility validation")
-    parser.add_argument("--snapshot-target", default="", help="JSON C++ execution snapshots for Oxidizer compatibility validation")
-    parser.add_argument("--snapshot-validation", action="store_true", help="Enable optional canonical JSON snapshot validation")
-    parser.add_argument("--mode", choices=["full", "header", "mapping", "method", "compile", "repair", "alphatrans-baseline", "react-baseline", "direct-translation", "oxidizer-baseline"], default="full", help="Translation mode: full pipeline, focused stages, or one of the available baselines")
-    parser.add_argument("--run-id", default="", help="Use a specific existing run id instead of creating a new run")
+    parser.add_argument("--test", action="store_true", help="Test mode (offline mocked LLM answers)")
+    parser.add_argument("--mapping-ai", default="", help="Model for the Java-to-C++ method mapping stage; defaults to --ai")
+    parser.add_argument(
+        "--mapping-thinking",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Enable thinking mode for the mapping model (default on, --no-mapping-thinking to disable)",
+    )
     args = parser.parse_args()
-    main(args.ai, args.project, test_mode=args.test, resume=args.resume, force_rebuild=args.force_rebuild, clear_method_progress=args.clear_method_progress, skip_mapping=args.skip_mapping, skip_cpp_compile=args.skip_cpp_compile, compile_timeout=args.compile_timeout, repair_after_compile=args.repair_after_compile, max_repair_attempts=args.max_repair_attempts, apply_repair=args.apply_repair, max_tool_calls=args.max_tool_calls, header_batch_size=args.header_batch_size, header_max_rounds=args.header_max_rounds, header_translation_mode=args.header_translation_mode, method_translation_mode=args.method_translation_mode, header_grouping_strategy=args.header_grouping_strategy, header_grouping_seed=args.header_grouping_seed, allow_header_failures=args.allow_header_failures, repair_test_suites=args.repair_test_suites, temperature=args.temperature, feature_requery_budget=args.feature_requery_budget, fragment_max_tries=args.fragment_max_tries, type_compatibility=not args.disable_type_compatibility, snapshot_source=args.snapshot_source, snapshot_target=args.snapshot_target, snapshot_validation=args.snapshot_validation, mode=args.mode, run_id=args.run_id, mapping_ai=args.mapping_ai, mapping_thinking=args.mapping_thinking)
+
+    # rq6-batch-size 必须显式给出批量；其它模式固定为标准配置，禁止传入该参数。
+    if args.mode == "rq6-batch-size":
+        if args.header_batch_size is None:
+            parser.error("--mode rq6-batch-size requires --header-batch-size")
+    elif args.header_batch_size is not None:
+        parser.error("--header-batch-size is only valid with --mode rq6-batch-size")
+
+    config = resolve_experiment_config(args.mode, args.header_batch_size)
+    main(
+        args.ai,
+        args.project,
+        test_mode=args.test,
+        resume=args.resume,
+        force_rebuild=args.force_rebuild,
+        mode=args.mode,
+        run_id=args.run_id,
+        mapping_ai=args.mapping_ai,
+        mapping_thinking=args.mapping_thinking,
+        **config,
+    )

@@ -37,9 +37,7 @@ def main() -> int:
     parser.add_argument("--phase", choices=["pilot", "full"], default="pilot")
     parser.add_argument("--workers", type=int, default=1)
     parser.add_argument("--ai", default="deepseek")
-    parser.add_argument("--temperature", type=float, default=0.2)
-    parser.add_argument("--compile-timeout", type=int, default=60)
-    parser.add_argument("--max-repair-attempts", type=int, default=10)
+    parser.add_argument("--compile-timeout", type=int, default=60, help="Timeout for this runner's own evaluation step")
     parser.add_argument("--experiment-id", default="")
     parser.add_argument("--force-project", action="append", default=[])
     args = parser.parse_args()
@@ -110,8 +108,6 @@ def _load_valid_rows(
         "phase": args.phase,
         "strategy": "alphatrans",
         "ai": args.ai,
-        "temperature": args.temperature,
-        "max_repair_attempts": max(1, args.max_repair_attempts),
     }
     if any(experiment.get(key) != value for key, value in expected.items()):
         return []
@@ -190,10 +186,7 @@ def _run_project(args, project: str, experiment_id: str, output_dir: Path) -> di
         "--ai", args.ai,
         "--project", project,
         "--run-id", run_id,
-        "--temperature", str(args.temperature),
-        "--compile-timeout", str(args.compile_timeout),
         "--mode", "alphatrans-baseline",
-        "--max-repair-attempts", str(max(1, args.max_repair_attempts)),
     ]
     started = time.monotonic()
     with log_path.open("w", encoding="utf-8") as log:
@@ -245,9 +238,6 @@ def _write_aggregate(
             "phase": args.phase,
             "strategy": "alphatrans",
             "ai": args.ai,
-            "temperature": args.temperature,
-            "compile_timeout": args.compile_timeout,
-            "max_repair_attempts": max(1, args.max_repair_attempts),
             "workers": args.workers,
             "projects": projects,
         },

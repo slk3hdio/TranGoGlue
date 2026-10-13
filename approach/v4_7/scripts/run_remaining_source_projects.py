@@ -45,11 +45,6 @@ def main() -> int:
     parser.add_argument("--projects", default="", help="Comma-separated project names. Defaults to source_projects minus existing v4_7 projects.")
     parser.add_argument("--include-existing", action="store_true", help="Run all source_projects instead of excluding existing v4_7 experiments.")
     parser.add_argument("--run-prefix", default="", help="Shared run id prefix. Defaults to batch timestamp.")
-    parser.add_argument("--header-batch-size", type=int, default=3)
-    parser.add_argument("--max-repair-attempts", type=int, default=6)
-    parser.add_argument("--compile-timeout", type=int, default=60)
-    parser.add_argument("--repair-test-suites", default="base", metavar="SUITES", help="repair 测试套件：base 或 base,additional")
-    parser.add_argument("--allow-header-failures", action="store_true", help="Continue full pipeline when header translation does not converge.")
     parser.add_argument("--skip-existing-success", action="store_true", help="Skip project if this batch summary already marks it completed.")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
@@ -82,11 +77,6 @@ def main() -> int:
             ai_name=args.ai,
             project_name=project_name,
             run_id=run_id,
-            header_batch_size=args.header_batch_size,
-            max_repair_attempts=args.max_repair_attempts,
-            compile_timeout=args.compile_timeout,
-            allow_header_failures=args.allow_header_failures,
-            repair_test_suites=args.repair_test_suites,
         )
         rows.append(row)
         _write_outputs(rows, csv_path, json_path)
@@ -109,11 +99,6 @@ def _run_project(
     ai_name: str,
     project_name: str,
     run_id: str,
-    header_batch_size: int,
-    max_repair_attempts: int,
-    compile_timeout: int,
-    allow_header_failures: bool,
-    repair_test_suites: str,
 ) -> dict[str, Any]:
     """运行一个完整翻译项目并收集阶段结果。
 
@@ -121,11 +106,6 @@ def _run_project(
         ai_name: 模型名称。
         project_name: 项目名称。
         run_id: 本次运行 ID。
-        header_batch_size: Header 批大小。
-        max_repair_attempts: 单个 repair 目标的最大编译尝试次数。
-        compile_timeout: 单次编译超时秒数。
-        allow_header_failures: 是否允许 Header 未收敛后继续。
-        repair_test_suites: repair 阶段使用的功能测试套件。
 
     返回:
         包含进程状态、编译及 repair 指标的项目摘要。
@@ -142,19 +122,7 @@ def _run_project(
         "full",
         "--run-id",
         run_id,
-        "--header-batch-size",
-        str(header_batch_size),
-        "--repair-after-compile",
-        "--apply-repair",
-        "--max-repair-attempts",
-        str(max_repair_attempts),
-        "--compile-timeout",
-        str(compile_timeout),
-        "--repair-test-suites",
-        repair_test_suites,
     ]
-    if allow_header_failures:
-        command.append("--allow-header-failures")
 
     run_root = cfg_run_dir(ai_name, project_name, VERSION, run_id)
     result_dir = run_root / "result"
