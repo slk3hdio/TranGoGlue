@@ -232,5 +232,6 @@ The benchmark modules are drawn from
 [alibaba/jvm-sandbox](https://github.com/alibaba/jvm-sandbox),
 [alibaba/easyexcel](https://github.com/alibaba/easyexcel),
 [TooTallNate/Java-WebSocket](https://github.com/TooTallNate/Java-WebSocket),
-Apache HttpClient, and [dromara/hutool](https://github.com/dromara/hutool).
+Apache HttpClient, and [dromara/hutool](https://github.com/dromara/hutool),
+[java-callgraph2](https://github.com/Adrninistrator/java-callgraph2)
 We are grateful to their authors and maintainers.
